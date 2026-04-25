@@ -1,0 +1,204 @@
+<main class="app-shell">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Exam Prep Phase 2</p>
+      <h1>Study from your own material</h1>
+    </div>
+    <div class="topbar-actions">
+      <span class="status-pill">{{ status }}</span>
+      <button *ngIf="!isAuthenticated" type="button" (click)="signIn()" [disabled]="!config">Sign in</button>
+      <button *ngIf="isAuthenticated" class="secondary" type="button" (click)="signOut()">Sign out</button>
+    </div>
+  </header>
+
+  <section *ngIf="!isAuthenticated" class="auth-panel">
+    <h2>Sign in to continue</h2>
+    <p>Your sources, exam jobs, and history are isolated to your account in Phase 2.</p>
+    <button type="button" (click)="signIn()" [disabled]="!config">Sign in with Cognito</button>
+  </section>
+
+  <section *ngIf="isAuthenticated" class="workspace">
+    <nav class="tabs" aria-label="Workspace views">
+      <button type="button" [class.active]="activeTab === 'sources'" (click)="setTab('sources')">Sources</button>
+      <button type="button" [class.active]="activeTab === 'generate'" (click)="setTab('generate')">Generate</button>
+      <button type="button" [class.active]="activeTab === 'review'" (click)="setTab('review')">Review</button>
+      <button type="button" [class.active]="activeTab === 'history'" (click)="setTab('history')">History</button>
+    </nav>
+
+    <div class="content-grid">
+      <section class="main-panel">
+        <ng-container [ngSwitch]="activeTab">
+          <section *ngSwitchCase="'sources'" class="view-stack">
+            <div class="section-head">
+              <div>
+                <h2>Material sources</h2>
+                <p>Upload or paste material, then select ready sources for generation.</p>
+              </div>
+              <div class="button-row">
+                <button class="secondary" type="button" (click)="refreshAll()" [disabled]="busy">Refresh</button>
+                <button class="danger" type="button" (click)="clearLocalSources()" [disabled]="busy">Delete local sources</button>
+              </div>
+            </div>
+
+            <div class="input-grid">
+              <article class="input-panel">
+                <h3>Paste text</h3>
+                <label for="textTitle">Title</label>
+                <input id="textTitle" [(ngModel)]="textTitle" placeholder="AWS networking notes" />
+                <label for="knowledgeText">Knowledge text</label>
+                <textarea id="knowledgeText" [(ngModel)]="knowledgeText" placeholder="Paste notes here"></textarea>
+                <button type="button" (click)="saveTextSource()" [disabled]="busy || !knowledgeText.trim()">Save text source</button>
+              </article>
+
+              <article class="input-panel">
+                <h3>Upload file</h3>
+                <label for="knowledgeFile">PDF, TXT, or DOCX</label>
+                <input id="knowledgeFile" type="file" accept=".pdf,.txt,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" (change)="onFileSelected($event)" />
+                <button type="button" (click)="uploadFileSource()" [disabled]="busy || !selectedFile">Upload file source</button>
+              </article>
+            </div>
+
+            <div class="source-list">
+              <article *ngFor="let asset of assets" class="source-card" [class.selected]="selectedSourceIds.has(asset.id)">
+                <div>
+                  <h3>{{ asset.title || asset.fileName || asset.id }}</h3>
+                  <p>{{ asset.sourceType }} {{ asset.fileType || '' }} | {{ asset.status }}</p>
+                  <p *ngIf="asset.error" class="error-text">{{ asset.error }}</p>
+                </div>
+                <button class="secondary" type="button" (click)="toggleSource(asset)" [disabled]="asset.status !== 'READY'">
+                  {{ selectedSourceIds.has(asset.id) ? 'Selected' : 'Use in exam' }}
+                </button>
+              </article>
+              <div *ngIf="!assets.length" class="empty-state">No sources yet.</div>
+            </div>
+          </section>
+
+          <section *ngSwitchCase="'generate'" class="view-stack">
+            <div class="section-head">
+              <div>
+                <h2>Generate exam</h2>
+                <p>{{ selectedAssets.length }} ready source{{ selectedAssets.length === 1 ? '' : 's' }} selected.</p>
+              </div>
+              <button type="button" (click)="createExamJob()" [disabled]="busy || !selectedAssets.length">Create exam job</button>
+            </div>
+
+            <div class="selected-list">
+              <span *ngFor="let asset of selectedAssets">{{ asset.title || asset.fileName || asset.id }}</span>
+              <span *ngIf="!selectedAssets.length" class="muted">Select sources first.</span>
+            </div>
+
+            <div class="form-grid">
+              <div>
+                <label for="profile">Certification profile</label>
+                <select id="profile" [(ngModel)]="selectedProfileId" (change)="applyProfile()">
+                  <option *ngFor="let profile of profiles" [value]="profile.id">{{ profile.name }}</option>
+                </select>
+              </div>
+              <div>
+                <label for="questionCount">Question count</label>
+                <input id="questionCount" type="number" min="1" max="25" [(ngModel)]="questionCount" />
+              </div>
+            </div>
+
+            <label for="certificationName">Certification target</label>
+            <input id="certificationName" [(ngModel)]="certificationName" />
+
+            <div class="choice-grid">
+              <label><input type="checkbox" [(ngModel)]="typeMcq" /> Multiple choice</label>
+              <label><input type="checkbox" [(ngModel)]="typeFib" /> Fill in the blank</label>
+              <label><input type="checkbox" [(ngModel)]="typeTrick" /> Trick questions</label>
+              <label><input type="checkbox" [(ngModel)]="includeDistractors" /> Strong distractors</label>
+            </div>
+          </section>
+
+          <section *ngSwitchCase="'review'" class="view-stack">
+            <div class="section-head">
+              <div>
+                <h2>Review</h2>
+                <p>{{ result?.examTitle || 'No exam loaded' }}</p>
+              </div>
+            </div>
+
+            <article *ngFor="let question of result?.questions; let i = index" class="question-card">
+              <h3>Question {{ i + 1 }}</h3>
+              <p>{{ question.prompt }}</p>
+              <div class="badge-row">
+                <span>{{ question.type }}</span>
+                <span>{{ question.difficulty }}</span>
+              </div>
+
+              <div *ngIf="question.choices.length" class="choice-list">
+                <button
+                  *ngFor="let choice of question.choices"
+                  class="choice"
+                  type="button"
+                  [class.selected]="isSelectedAnswer(i, choice)"
+                  [class.correct]="interactions[i].showAnswer && isCorrectChoice(question, choice)"
+                  [class.incorrect]="isIncorrectSelection(i, question, choice)"
+                  (click)="selectChoice(i, choice)"
+                >
+                  {{ choice }}
+                </button>
+              </div>
+
+              <div class="button-row">
+                <button class="secondary" type="button" (click)="toggleHint(i)">{{ interactions[i].showHint ? 'Hide hint' : 'Show hint' }}</button>
+                <button class="secondary" type="button" (click)="toggleAnswer(i)">{{ interactions[i].showAnswer ? 'Hide answer' : 'Reveal answer' }}</button>
+                <button class="ghost" type="button" (click)="resetQuestion(i)">Reset</button>
+              </div>
+
+              <p *ngIf="interactions[i].showHint" class="hint">{{ question.hint }}</p>
+              <div *ngIf="interactions[i].showAnswer" class="answer">
+                <strong>Answer:</strong> {{ question.correctAnswer }}
+                <p>{{ question.explanation }}</p>
+                <small>Evidence: {{ question.sourceEvidence.join(', ') }}</small>
+              </div>
+            </article>
+
+            <div *ngIf="!result" class="empty-state">Create or reopen a completed exam job.</div>
+          </section>
+
+          <section *ngSwitchCase="'history'" class="view-stack">
+            <div class="section-head">
+              <div>
+                <h2>Saved exam history</h2>
+                <p>Completed jobs can be reopened for review.</p>
+              </div>
+              <select [(ngModel)]="historyFilter">
+                <option value="ALL">All</option>
+                <option value="QUEUED">Queued</option>
+                <option value="RUNNING">Running</option>
+                <option value="COMPLETED">Completed</option>
+                <option value="FAILED">Failed</option>
+              </select>
+            </div>
+
+            <article *ngFor="let job of filteredJobs" class="history-row">
+              <div>
+                <h3>{{ job.certificationName }}</h3>
+                <p>{{ job.status }} | {{ job.questionCount }} questions | {{ job.createdAt }}</p>
+                <p *ngIf="job.error" class="error-text">{{ job.error }}</p>
+              </div>
+              <button class="secondary" type="button" (click)="openJob(job.id)" [disabled]="busy || !job.resultAvailable">Open</button>
+            </article>
+            <div *ngIf="!filteredJobs.length" class="empty-state">No jobs match this filter.</div>
+          </section>
+        </ng-container>
+      </section>
+
+      <aside class="side-panel">
+        <section>
+          <h2>Activity</h2>
+          <ol>
+            <li *ngFor="let item of activity">{{ item }}</li>
+          </ol>
+        </section>
+
+        <details>
+          <summary>Technical details</summary>
+          <pre>{{ technicalDetails }}</pre>
+        </details>
+      </aside>
+    </div>
+  </section>
+</main>

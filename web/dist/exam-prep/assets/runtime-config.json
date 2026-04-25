@@ -1,0 +1,7 @@
+{
+  "apiBaseUrl": "https://8o42z7v0y6.execute-api.ap-southeast-1.amazonaws.com/dev",
+  "cognitoDomain": "https://exam-prep-mvp-dev-dev-auth.auth.ap-southeast-1.amazoncognito.com",
+  "cognitoClientId": "31k5moc1ck43lq1rtnd52h1157",
+  "redirectUri": "https://de5j1bljm2cyf.cloudfront.net/",
+  "logoutUri": "https://de5j1bljm2cyf.cloudfront.net/"
+}

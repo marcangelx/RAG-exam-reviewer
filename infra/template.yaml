@@ -1,0 +1,620 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: GenAI Exam Prep Phase 2 infrastructure using AWS SAM.
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment stage name used for the HTTP API and stack outputs.
+  MaxUploadSizeMb:
+    Type: Number
+    Default: 10
+    Description: Maximum allowed upload size in megabytes for PDF, TXT, and DOCX files.
+  OpenAIModel:
+    Type: String
+    Default: gpt-5.4-mini
+    Description: OpenAI model identifier used to generate exam questions.
+  OpenAISecretArn:
+    Type: String
+    Default: ""
+    Description: Existing Secrets Manager ARN with an apiKey field. Leave blank to create a placeholder secret.
+
+Conditions:
+  UseExistingOpenAISecret: !Not [!Equals [!Ref OpenAISecretArn, ""]]
+  CreateManagedOpenAISecret: !Equals [!Ref OpenAISecretArn, ""]
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 256
+    CodeUri: ..
+    Environment:
+      Variables:
+        APP_BUCKET_NAME: !Ref AppBucket
+        APP_TABLE_NAME: !Ref MetadataTable
+        MAX_UPLOAD_SIZE_MB: !Ref MaxUploadSizeMb
+        OPENAI_MODEL: !Ref OpenAIModel
+        OPENAI_SECRET_ARN: !If
+          - UseExistingOpenAISecret
+          - !Ref OpenAISecretArn
+          - !Ref ManagedOpenAISecret
+
+Resources:
+  # Cognito user pool provides hosted sign-up, sign-in, password reset, and user identity.
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-users"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+
+  # Hosted UI domain gives the Angular app a managed Cognito auth entry point.
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "${AWS::StackName}-${StageName}-auth"
+      UserPoolId: !Ref UserPool
+
+  # Cognito app client uses authorization code with PKCE and no client secret for browser auth.
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub "${AWS::StackName}-web-client"
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+        - COGNITO
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - !Sub "https://${WebDistribution.DomainName}/"
+        - http://localhost:4200/
+      LogoutURLs:
+        - !Sub "https://${WebDistribution.DomainName}/"
+        - http://localhost:4200/
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+
+  # Authenticated HTTP API entry point for the Angular app and future external clients.
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+      Auth:
+        DefaultAuthorizer: CognitoJwtAuthorizer
+        Authorizers:
+          CognitoJwtAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+              audience:
+                - !Ref UserPoolClient
+
+  # Single S3 bucket for web assets, user uploads, processed text, and generated exam payloads.
+  AppBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - "*"
+            AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+            MaxAge: 300
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Single-table DynamoDB design stores user-scoped knowledge assets and exam jobs.
+  MetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+
+  # Placeholder secret lets the stack boot without requiring a pre-created secret.
+  ManagedOpenAISecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreateManagedOpenAISecret
+    Properties:
+      Name: !Sub "${AWS::StackName}/openai"
+      Description: Replace the placeholder value with a real OpenAI API key before using generation.
+      SecretString: '{"apiKey":"REPLACE_ME"}'
+
+  # Origin Access Control keeps the web app private in S3 while still serving through CloudFront.
+  WebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-web-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront hosts the Angular single-page app from the /web prefix in the shared bucket.
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        Origins:
+          - Id: WebBucketOrigin
+            DomainName: !GetAtt AppBucket.RegionalDomainName
+            OriginPath: /web
+            S3OriginConfig: {}
+            OriginAccessControlId: !GetAtt WebOriginAccessControl.Id
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          TargetOriginId: WebBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # Bucket policy grants CloudFront read access to frontend assets only.
+  AppBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AppBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontReadWebAssets
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action:
+              - s3:GetObject
+            Resource: !Sub "${AppBucket.Arn}/web/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}"
+
+  # API handler that issues user-scoped presigned S3 URLs and creates file metadata records.
+  CreatePresignedUploadFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/create_presigned_upload/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/create_presigned_upload/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt MetadataTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/uploads/*"
+      Events:
+        CreatePresignedUpload:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /uploads/presign
+            Method: POST
+
+  # API handler that accepts pasted text and writes user-scoped processed knowledge to S3.
+  SaveTextKnowledgeFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/save_text_knowledge/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/save_text_knowledge/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt MetadataTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/processed/*"
+      Events:
+        SaveTextKnowledge:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /knowledge/text
+            Method: POST
+
+  # S3-triggered processor extracts text from uploaded files and writes chunked knowledge JSON.
+  ProcessKnowledgeFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/process_knowledge/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/process_knowledge/app.handler
+      Timeout: 180
+      MemorySize: 1024
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt MetadataTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/uploads/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/processed/*"
+      Events:
+        UploadedFileCreated:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - Object Created
+              detail:
+                bucket:
+                  name:
+                    - !Ref AppBucket
+                object:
+                  key:
+                    - wildcard: users/*/uploads/*
+
+  # API handler lists knowledge assets owned by the authenticated user.
+  ListKnowledgeFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/list_knowledge/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/list_knowledge/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !GetAtt MetadataTable.Arn
+      Events:
+        ListKnowledge:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /knowledge
+            Method: GET
+
+  # API handler returns processing status for one user-owned knowledge asset.
+  GetKnowledgeFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/get_knowledge/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/get_knowledge/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt MetadataTable.Arn
+      Events:
+        GetKnowledge:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /knowledge/{documentId}
+            Method: GET
+
+  # API handler creates generation jobs and starts the Step Functions workflow.
+  CreateExamJobFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/create_exam_job/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/create_exam_job/app.handler
+      Environment:
+        Variables:
+          GENERATION_STATE_MACHINE_ARN: !Ref GenerationStateMachine
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt MetadataTable.Arn
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !Ref GenerationStateMachine
+      Events:
+        CreateExamJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /exam-jobs
+            Method: POST
+
+  # API handler lists saved exam jobs owned by the authenticated user.
+  ListExamJobsFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/list_exam_jobs/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/list_exam_jobs/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !GetAtt MetadataTable.Arn
+      Events:
+        ListExamJobs:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /exam-jobs
+            Method: GET
+
+  # API handler returns job status and inlines the generated exam once it is complete.
+  GetExamJobFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/get_exam_job/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/get_exam_job/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt MetadataTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/generated/*"
+      Events:
+        GetExamJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /exam-jobs/{jobId}
+            Method: GET
+
+  # API handler returns static certification profile presets for the Angular UI.
+  GetCertificationProfilesFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/get_certification_profiles/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/get_certification_profiles/app.handler
+      Events:
+        GetCertificationProfiles:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /certification-profiles
+            Method: GET
+
+  # Async generator builds grounded prompts, calls OpenAI, validates JSON, and stores exam results.
+  GenerateExamFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/generate_exam/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/generate_exam/app.handler
+      Timeout: 60
+      MemorySize: 512
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt MetadataTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/processed/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${AppBucket.Arn}/users/*/generated/*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !If
+                - UseExistingOpenAISecret
+                - !Ref OpenAISecretArn
+                - !Ref ManagedOpenAISecret
+
+  # Failure handler marks a generation job FAILED after Step Functions retries are exhausted.
+  MarkExamJobFailedFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - functions/mark_exam_job_failed/app.js
+        Target: es2020
+    Properties:
+      Handler: functions/mark_exam_job_failed/app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt MetadataTable.Arn
+
+  # Step Functions Standard workflow retries generation and records final failures.
+  GenerationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Definition:
+        StartAt: GenerateExam
+        States:
+          GenerateExam:
+            Type: Task
+            Resource: !GetAtt GenerateExamFunction.Arn
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 3
+                MaxAttempts: 3
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                ResultPath: $.errorInfo
+                Next: MarkJobFailed
+            End: true
+          MarkJobFailed:
+            Type: Task
+            Resource: !GetAtt MarkExamJobFailedFunction.Arn
+            ResultPath: $.failureResult
+            Next: FailWorkflow
+          FailWorkflow:
+            Type: Fail
+            Error: ExamGenerationFailed
+            Cause: Exam generation failed after retries.
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GenerateExamFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref MarkExamJobFailedFunction
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL for the HTTP API.
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+  WebAppUrl:
+    Description: CloudFront URL for the Angular web application after assets are synced.
+    Value: !Sub "https://${WebDistribution.DomainName}"
+  BucketName:
+    Description: Shared S3 bucket for web assets and application data.
+    Value: !Ref AppBucket
+  MetadataTableName:
+    Description: DynamoDB table name used for user-scoped asset and job metadata.
+    Value: !Ref MetadataTable
+  EffectiveOpenAISecretArn:
+    Description: Secrets Manager ARN used by the exam generator Lambda.
+    Value: !If
+      - UseExistingOpenAISecret
+      - !Ref OpenAISecretArn
+      - !Ref ManagedOpenAISecret
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID used for Phase 2 authentication.
+    Value: !Ref UserPool
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool Client ID used by the Angular app.
+    Value: !Ref UserPoolClient
+  CognitoHostedUiDomain:
+    Description: Cognito Hosted UI domain for browser sign-in and sign-out.
+    Value: !Sub "https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com"
+  GenerationStateMachineArn:
+    Description: Step Functions state machine ARN used for exam generation retries.
+    Value: !Ref GenerationStateMachine
