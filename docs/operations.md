@@ -14,7 +14,7 @@ Required tools:
 
 Recommended AWS profile setup:
 
-`export AWS_PROFILE=AdministratorAccess-797985953771`
+`export AWS_PROFILE=AdministratorAccess-<AWS_ACCOUNT_ID>`
 
 ## Install Dependencies
 

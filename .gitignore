@@ -8,4 +8,10 @@ __pycache__/
 *.pyd
 .DS_Store
 node_modules/
-
+web/dist/
+web/.angular/
+.env
+.env.*
+*.log
+runtime-config.local.json
+web/src/assets/runtime-config.local.json
