@@ -1,103 +1,44 @@
-import { CommonModule } from "@angular/common";
-import { Component, OnInit } from "@angular/core";
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit, inject } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 
-type AppTab = "sources" | "generate" | "review" | "history";
-type QuestionType = "MULTIPLE_CHOICE" | "FILL_IN_THE_BLANK" | "TRICK";
-
-interface RuntimeConfig {
-  apiBaseUrl: string;
-  cognitoDomain: string;
-  cognitoClientId: string;
-  redirectUri: string;
-  logoutUri: string;
-}
-
-interface TokenSet {
-  accessToken: string;
-  idToken: string;
-  refreshToken?: string;
-  expiresAt: number;
-}
-
-interface KnowledgeAsset {
-  id: string;
-  title?: string;
-  fileName?: string;
-  sourceType: string;
-  fileType?: string;
-  status: string;
-  createdAt?: string;
-  updatedAt?: string;
-  error?: string | null;
-}
-
-interface CertificationProfile {
-  id: string;
-  name: string;
-  questionCount: number;
-  questionTypes: QuestionType[];
-  includeDistractors: boolean;
-}
-
-interface ExamJob {
-  id: string;
-  status: string;
-  certificationName: string;
-  questionCount: number;
-  questionTypes: QuestionType[];
-  includeDistractors: boolean;
-  sourceAssetIds: string[];
-  resultAvailable: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-  error?: string | null;
-}
-
-interface ExamQuestion {
-  type: QuestionType;
-  prompt: string;
-  choices: string[];
-  hint: string;
-  correctAnswer: string;
-  explanation: string;
-  difficulty: string;
-  sourceEvidence: string[];
-}
-
-interface ExamResult {
-  examTitle: string;
-  questions: ExamQuestion[];
-}
-
-interface QuestionInteraction {
-  selectedChoice: string | null;
-  showHint: boolean;
-  showAnswer: boolean;
-}
+import {
+  AppTab,
+  CertificationProfile,
+  ExamJob,
+  ExamQuestion,
+  ExamResult,
+  KnowledgeAsset,
+  QuestionInteraction,
+  QuestionType,
+  RetryAction,
+  RuntimeConfig,
+  WorkflowStep,
+} from "./app.models";
+import { AuthService } from "./auth.service";
+import { ExamApiService } from "./exam-api.service";
+import { ReviewSessionService } from "./review-session.service";
+import { WorkspaceDataService } from "./workspace-data.service";
 
 @Component({
   selector: "app-root",
-  standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [FormsModule],
   templateUrl: "./app.component.html",
   styleUrl: "./app.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AppComponent implements OnInit {
-  config: RuntimeConfig | null = null;
-  tokens: TokenSet | null = null;
+  private readonly auth = inject(AuthService);
+  private readonly api = inject(ExamApiService);
+  private readonly workspace = inject(WorkspaceDataService);
+  private readonly review = inject(ReviewSessionService);
+  private readonly cdr = inject(ChangeDetectorRef);
+
   activeTab: AppTab = "sources";
   status = "Loading";
   busy = false;
-  technicalDetails = "No API activity yet.";
-  activity: string[] = ["Ready for Phase 2 user-scoped workflows."];
-
-  assets: KnowledgeAsset[] = [];
-  selectedSourceIds = new Set<string>();
-  profiles: CertificationProfile[] = [];
-  jobs: ExamJob[] = [];
-  result: ExamResult | null = null;
-  interactions: QuestionInteraction[] = [];
+  errorMessage = "";
+  retryLabel = "";
+  activity: string[] = ["Ready to add sources."];
   selectedFile: File | null = null;
   historyFilter = "ALL";
 
@@ -111,16 +52,46 @@ export class AppComponent implements OnInit {
   typeTrick = true;
   includeDistractors = true;
 
+  private retryAction: RetryAction = null;
+
+  get config(): RuntimeConfig | null {
+    return this.auth.config();
+  }
+
   get isAuthenticated(): boolean {
-    return Boolean(this.tokens?.accessToken) && !this.isTokenExpired();
+    return this.auth.isAuthenticated();
+  }
+
+  get technicalDetails(): string {
+    return this.api.technicalDetails();
+  }
+
+  get assets(): KnowledgeAsset[] {
+    return this.workspace.assets();
   }
 
   get readyAssets(): KnowledgeAsset[] {
-    return this.assets.filter((asset) => asset.status === "READY");
+    return this.workspace.readyAssets();
+  }
+
+  get pendingAssets(): KnowledgeAsset[] {
+    return this.workspace.pendingAssets();
   }
 
   get selectedAssets(): KnowledgeAsset[] {
-    return this.readyAssets.filter((asset) => this.selectedSourceIds.has(asset.id));
+    return this.workspace.selectedAssets();
+  }
+
+  get selectedSourceIds(): Set<string> {
+    return this.workspace.selectedSourceIds();
+  }
+
+  get profiles(): CertificationProfile[] {
+    return this.workspace.profiles();
+  }
+
+  get jobs(): ExamJob[] {
+    return this.workspace.jobs();
   }
 
   get filteredJobs(): ExamJob[] {
@@ -130,114 +101,213 @@ export class AppComponent implements OnInit {
     return this.jobs.filter((job) => job.status === this.historyFilter);
   }
 
-  async ngOnInit(): Promise<void> {
-    await this.loadConfig();
-    await this.completeHostedUiSignIn();
-    this.loadStoredSession();
-    this.loadStoredSelection();
+  get result(): ExamResult | null {
+    return this.review.result();
+  }
 
-    if (this.isAuthenticated) {
-      await this.loadInitialData();
-    } else {
-      this.status = "Sign in required";
+  get interactions(): QuestionInteraction[] {
+    return this.review.interactions();
+  }
+
+  get currentQuestionIndex(): number {
+    return this.review.currentQuestionIndex();
+  }
+
+  get currentQuestion(): ExamQuestion | null {
+    return this.review.currentQuestion();
+  }
+
+  get reviewTotal(): number {
+    return this.review.reviewTotal();
+  }
+
+  get reviewProgressLabel(): string {
+    return this.review.reviewProgressLabel();
+  }
+
+  get reviewProgressPercent(): number {
+    return this.review.reviewProgressPercent();
+  }
+
+  get currentQuestionAnswered(): boolean {
+    return this.review.currentQuestionAnswered();
+  }
+
+  get currentQuestionRevealed(): boolean {
+    return this.review.currentQuestionRevealed();
+  }
+
+  get answeredCount(): number {
+    return this.review.answeredCount();
+  }
+
+  get revealedCount(): number {
+    return this.review.revealedCount();
+  }
+
+  get hasEnoughText(): boolean {
+    return this.knowledgeText.trim().length >= 20;
+  }
+
+  get canGenerateExam(): boolean {
+    return Boolean(this.selectedAssets.length && !this.busy);
+  }
+
+  get workflowSteps(): WorkflowStep[] {
+    const hasReadySource = this.readyAssets.length > 0;
+    const hasResult = Boolean(this.result?.questions.length);
+    const hasHistory = this.jobs.length > 0;
+    const completedGeneration = hasResult || this.jobs.some((job) => job.status === "COMPLETED");
+
+    const steps: Array<Omit<WorkflowStep, "state"> & { complete: boolean }> = [
+      {
+        index: 1,
+        label: "Sources",
+        detail: hasReadySource ? `${this.readyAssets.length} ready` : "Add material",
+        tab: "sources",
+        complete: hasReadySource,
+      },
+      {
+        index: 2,
+        label: "Generate",
+        detail: this.selectedAssets.length ? `${this.selectedAssets.length} selected` : "Select sources",
+        tab: "generate",
+        complete: completedGeneration,
+      },
+      {
+        index: 3,
+        label: "Review",
+        detail: hasResult ? `${this.result?.questions.length || 0} questions` : "Open results",
+        tab: "review",
+        complete: hasResult && this.revealedCount > 0,
+      },
+      {
+        index: 4,
+        label: "History",
+        detail: hasHistory ? `${this.jobs.length} saved` : "Saved exams",
+        tab: "history",
+        complete: hasHistory,
+      },
+    ];
+
+    return steps.map((step) => ({
+      ...step,
+      state: this.activeTab === step.tab ? "current" : step.complete ? "done" : "upcoming",
+    }));
+  }
+
+  async ngOnInit(): Promise<void> {
+    try {
+      await this.auth.initialize();
+      this.workspace.loadStoredSelection();
+
+      if (this.isAuthenticated) {
+        await this.loadInitialData();
+      } else {
+        this.setStatus("Sign in required");
+      }
+    } catch (error) {
+      this.handleError(error, "Refresh app", async () => this.ngOnInit());
     }
+  }
+
+  sourceTypeLabel(sourceType: string): string {
+    return sourceType === "FILE" ? "File" : "Text";
+  }
+
+  statusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      UPLOADED: "Uploaded",
+      PROCESSING: "Preparing",
+      READY: "Ready",
+      FAILED: "Failed",
+      QUEUED: "Queued",
+      RUNNING: "Generating",
+      COMPLETED: "Complete",
+    };
+    return labels[status] || status;
+  }
+
+  questionTypeLabel(type: QuestionType): string {
+    const labels: Record<QuestionType, string> = {
+      MULTIPLE_CHOICE: "Multiple choice",
+      FILL_IN_THE_BLANK: "Fill in the blank",
+      TRICK: "Trick question",
+    };
+    return labels[type];
+  }
+
+  formatDate(value?: string): string {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(date);
   }
 
   async signIn(): Promise<void> {
-    if (!this.config) {
-      this.setStatus("Missing runtime config");
-      return;
-    }
-
-    const verifier = this.createRandomString();
-    const challenge = await this.createCodeChallenge(verifier);
-    const state = this.createRandomString();
-    localStorage.setItem("exam-prep-pkce-verifier", verifier);
-    localStorage.setItem("exam-prep-oauth-state", state);
-
-    const params = new URLSearchParams({
-      client_id: this.config.cognitoClientId,
-      response_type: "code",
-      scope: "openid email profile",
-      redirect_uri: this.redirectUri(),
-      code_challenge_method: "S256",
-      code_challenge: challenge,
-      state,
-    });
-
-    window.location.assign(`${this.authDomain()}/oauth2/authorize?${params.toString()}`);
+    await this.withBusy("Opening secure sign-in", async () => this.auth.signIn(), "Try sign-in again", async () => this.signIn());
   }
 
   signOut(): void {
-    if (!this.config) {
-      this.clearSession();
-      return;
-    }
-
-    this.clearSession();
-    const params = new URLSearchParams({
-      client_id: this.config.cognitoClientId,
-      logout_uri: this.logoutUri(),
-    });
-    window.location.assign(`${this.authDomain()}/logout?${params.toString()}`);
+    this.auth.signOut();
   }
 
   setTab(tab: AppTab): void {
     this.activeTab = tab;
+    this.cdr.markForCheck();
   }
 
   async refreshAll(): Promise<void> {
-    await this.withBusy("Refreshing", async () => {
-      await Promise.all([this.loadAssets(), this.loadJobs(), this.loadProfiles()]);
-      this.addActivity("Refreshed sources, history, and profiles.");
-    });
+    await this.withBusy("Refreshing sources and history", async () => {
+      await this.workspace.loadInitialData();
+      this.applyDefaultProfile();
+      this.addActivity("Sources, history, and exam presets are up to date.");
+    }, "Try refresh again", async () => this.refreshAll());
   }
 
   async saveTextSource(): Promise<void> {
-    await this.withBusy("Saving text source", async () => {
-      const payload = await this.apiFetch<{ documentId: string; asset: KnowledgeAsset }>("/knowledge/text", {
-        method: "POST",
-        body: JSON.stringify({
-          title: this.textTitle,
-          text: this.knowledgeText,
-        }),
-      });
-      this.upsertAsset(payload.asset);
-      this.selectedSourceIds.add(payload.asset.id);
-      this.persistSelection();
+    const text = this.knowledgeText.trim();
+    if (text.length < 20) {
+      this.setError("Paste at least a few sentences so the app has enough material to create useful questions.");
+      return;
+    }
+
+    await this.withBusy("Saving source", async () => {
+      await this.workspace.saveTextSource(this.textTitle.trim(), text);
       this.textTitle = "";
       this.knowledgeText = "";
-      this.addActivity(`Text source ${payload.documentId} is ready.`);
-      this.activeTab = "generate";
-    });
+      this.addActivity("Text source is ready to use.");
+      this.setTab("generate");
+    }, "Try saving again", async () => this.saveTextSource());
   }
 
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     this.selectedFile = input.files?.[0] || null;
+    this.clearError();
   }
 
   async uploadFileSource(): Promise<void> {
     if (!this.selectedFile) {
-      this.setStatus("Choose a PDF, TXT, or DOCX file first.");
+      this.setError("Choose a PDF, TXT, or DOCX file before uploading.");
       return;
     }
 
     const file = this.selectedFile;
-    await this.withBusy("Uploading source", async () => {
-      const presign = await this.apiFetch<{ documentId: string; uploadUrl: string; asset: KnowledgeAsset }>(
-        "/uploads/presign",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            fileName: file.name,
-            fileSizeBytes: file.size,
-            contentType: file.type || "application/octet-stream",
-          }),
-        },
-      );
+    if (!this.isSupportedFile(file)) {
+      this.setError("This file type is not supported. Upload a PDF, TXT, or DOCX file.");
+      return;
+    }
 
-      this.upsertAsset(presign.asset);
+    await this.withBusy("Uploading source", async () => {
+      const presign = await this.workspace.createPresignedUpload(file);
       const uploadResponse = await fetch(presign.uploadUrl, {
         method: "PUT",
         headers: { "Content-Type": file.type || "application/octet-stream" },
@@ -245,33 +315,27 @@ export class AppComponent implements OnInit {
       });
 
       if (!uploadResponse.ok) {
-        throw new Error(`Upload failed with ${uploadResponse.status}`);
+        throw new Error("Upload failed. Try the file again, or choose a smaller supported file.");
       }
 
-      this.addActivity(`Uploaded ${file.name}. Processing started.`);
+      this.addActivity(`Uploaded ${file.name}. Preparing it for exam generation.`);
       await this.pollKnowledge(presign.documentId);
-    });
+    }, "Try upload again", async () => this.uploadFileSource());
   }
 
   toggleSource(asset: KnowledgeAsset): void {
-    if (asset.status !== "READY") {
-      this.setStatus("Only READY sources can be selected.");
-      return;
+    try {
+      this.clearError();
+      this.workspace.toggleSource(asset);
+    } catch (error) {
+      this.handleError(error);
     }
-
-    if (this.selectedSourceIds.has(asset.id)) {
-      this.selectedSourceIds.delete(asset.id);
-    } else {
-      this.selectedSourceIds.add(asset.id);
-    }
-    this.persistSelection();
   }
 
   clearLocalSources(): void {
-    this.assets = [];
-    this.selectedSourceIds.clear();
-    localStorage.removeItem("exam-prep-selected-source-ids");
-    this.addActivity("Cleared browser-local source list and selection. Backend files were not deleted.");
+    this.clearError();
+    this.workspace.clearLocalSources();
+    this.addActivity("Cleared the source list in this browser. Uploaded files remain saved.");
   }
 
   applyProfile(): void {
@@ -291,239 +355,158 @@ export class AppComponent implements OnInit {
   async createExamJob(): Promise<void> {
     const sourceAssetIds = this.selectedAssets.map((asset) => asset.id);
     if (!sourceAssetIds.length) {
-      this.setStatus("Select at least one ready source.");
-      this.activeTab = "sources";
+      this.setError("Select at least one ready source before generating an exam.");
+      this.setTab("sources");
       return;
     }
 
-    await this.withBusy("Creating exam job", async () => {
-      const payload = await this.apiFetch<{ jobId: string; job: ExamJob }>("/exam-jobs", {
-        method: "POST",
-        body: JSON.stringify({
-          sourceAssetIds,
-          certificationName: this.certificationName,
-          questionCount: this.questionCount,
-          questionTypes: this.selectedQuestionTypes(),
-          includeDistractors: this.includeDistractors,
-        }),
-      });
+    const questionTypes = this.selectedQuestionTypes();
+    if (!questionTypes.length) {
+      this.setError("Choose at least one question format in Customize question details.");
+      return;
+    }
 
-      this.addActivity(`Exam job ${payload.jobId} started.`);
-      await this.pollJob(payload.jobId);
-      await this.loadJobs();
-    });
+    const normalizedCount = Math.trunc(Number(this.questionCount));
+    if (!Number.isFinite(normalizedCount) || normalizedCount < 1 || normalizedCount > 25) {
+      this.setError("Question count must be between 1 and 25.");
+      return;
+    }
+    this.questionCount = normalizedCount;
+
+    await this.withBusy("Starting exam generation", async () => {
+      const job = await this.workspace.createExamJob({
+        sourceAssetIds,
+        certificationName: this.certificationName,
+        questionCount: this.questionCount,
+        questionTypes,
+        includeDistractors: this.includeDistractors,
+      });
+      this.addActivity("Exam generation started. This can take a short moment.");
+      await this.pollJob(job.id);
+      await this.workspace.loadJobs();
+    }, "Try generating again", async () => this.createExamJob());
   }
 
   async openJob(jobId: string): Promise<void> {
-    await this.withBusy("Loading exam job", async () => {
-      const payload = await this.apiFetch<{ job: ExamJob; result?: ExamResult }>(`/exam-jobs/${jobId}`);
+    await this.withBusy("Opening saved exam", async () => {
+      const payload = await this.workspace.getExamJob(jobId);
       if (payload.result) {
-        this.setResult(payload.result);
-        this.activeTab = "review";
+        this.review.setResult(payload.result);
+        this.setTab("review");
       }
-      this.setTechnicalDetails(payload);
-    });
+      this.api.setTechnicalDetails(payload);
+    }, "Try opening again", async () => this.openJob(jobId));
+  }
+
+  async retryLastAction(): Promise<void> {
+    const action = this.retryAction;
+    if (!action || this.busy) {
+      return;
+    }
+    await action();
+  }
+
+  clearError(): void {
+    this.errorMessage = "";
+    this.retryLabel = "";
+    this.retryAction = null;
+    this.cdr.markForCheck();
   }
 
   selectChoice(index: number, choice: string): void {
-    this.interactions[index].selectedChoice = choice;
+    this.review.selectChoice(index, choice);
   }
 
-  toggleHint(index: number): void {
-    this.interactions[index].showHint = !this.interactions[index].showHint;
+  setHint(index: number, event: Event): void {
+    this.review.setHint(index, (event.target as HTMLDetailsElement).open);
   }
 
   toggleAnswer(index: number): void {
-    this.interactions[index].showAnswer = !this.interactions[index].showAnswer;
+    this.review.toggleAnswer(index);
   }
 
   resetQuestion(index: number): void {
-    this.interactions[index] = {
-      selectedChoice: null,
-      showHint: false,
-      showAnswer: false,
-    };
+    this.review.resetQuestion(index);
+  }
+
+  setReviewQuestion(index: number): void {
+    this.review.setQuestion(index);
+  }
+
+  previousQuestion(): void {
+    this.review.previousQuestion();
+  }
+
+  nextQuestion(): void {
+    this.review.nextQuestion();
   }
 
   isSelectedAnswer(index: number, choice: string): boolean {
-    return this.interactions[index]?.selectedChoice === choice;
+    return this.review.isSelectedAnswer(index, choice);
   }
 
   isCorrectChoice(question: ExamQuestion, choice: string): boolean {
-    return question.correctAnswer.trim().toLowerCase() === choice.trim().toLowerCase();
+    return this.review.isCorrectChoice(question, choice);
   }
 
   isIncorrectSelection(index: number, question: ExamQuestion, choice: string): boolean {
-    const interaction = this.interactions[index];
-    return Boolean(interaction?.showAnswer && interaction.selectedChoice === choice && !this.isCorrectChoice(question, choice));
-  }
-
-  private async loadConfig(): Promise<void> {
-    const response = await fetch("assets/runtime-config.json", { cache: "no-store" });
-    this.config = (await response.json()) as RuntimeConfig;
-  }
-
-  private async completeHostedUiSignIn(): Promise<void> {
-    if (!this.config) {
-      return;
-    }
-
-    const url = new URL(window.location.href);
-    const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state");
-    if (!code) {
-      return;
-    }
-
-    const expectedState = localStorage.getItem("exam-prep-oauth-state");
-    const verifier = localStorage.getItem("exam-prep-pkce-verifier");
-    if (!state || state !== expectedState || !verifier) {
-      throw new Error("Invalid Cognito sign-in response.");
-    }
-
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: this.config.cognitoClientId,
-      code,
-      redirect_uri: this.redirectUri(),
-      code_verifier: verifier,
-    });
-
-    const response = await fetch(`${this.authDomain()}/oauth2/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Token exchange failed with ${response.status}`);
-    }
-
-    const tokenPayload = (await response.json()) as Record<string, string | number>;
-    const tokens: TokenSet = {
-      accessToken: String(tokenPayload["access_token"] || ""),
-      idToken: String(tokenPayload["id_token"] || ""),
-      refreshToken: String(tokenPayload["refresh_token"] || ""),
-      expiresAt: Date.now() + Number(tokenPayload["expires_in"] || 3600) * 1000,
-    };
-    localStorage.setItem("exam-prep-token-set", JSON.stringify(tokens));
-    localStorage.removeItem("exam-prep-pkce-verifier");
-    localStorage.removeItem("exam-prep-oauth-state");
-    window.history.replaceState({}, document.title, window.location.pathname);
-  }
-
-  private loadStoredSession(): void {
-    const raw = localStorage.getItem("exam-prep-token-set");
-    if (!raw) {
-      return;
-    }
-
-    try {
-      this.tokens = JSON.parse(raw) as TokenSet;
-    } catch (_error) {
-      this.clearSession();
-    }
-  }
-
-  private clearSession(): void {
-    this.tokens = null;
-    localStorage.removeItem("exam-prep-token-set");
-  }
-
-  private loadStoredSelection(): void {
-    const raw = localStorage.getItem("exam-prep-selected-source-ids");
-    if (!raw) {
-      return;
-    }
-    try {
-      this.selectedSourceIds = new Set(JSON.parse(raw) as string[]);
-    } catch (_error) {
-      this.selectedSourceIds.clear();
-    }
-  }
-
-  private persistSelection(): void {
-    localStorage.setItem("exam-prep-selected-source-ids", JSON.stringify(Array.from(this.selectedSourceIds)));
+    return this.review.isIncorrectSelection(index, question, choice);
   }
 
   private async loadInitialData(): Promise<void> {
     await this.withBusy("Loading workspace", async () => {
-      await Promise.all([this.loadProfiles(), this.loadAssets(), this.loadJobs()]);
+      await this.workspace.loadInitialData();
+      this.applyDefaultProfile();
       this.setStatus("Ready");
-    });
+    }, "Try loading again", async () => this.loadInitialData());
   }
 
-  private async loadProfiles(): Promise<void> {
-    const payload = await this.apiFetch<{ profiles: CertificationProfile[] }>("/certification-profiles");
-    this.profiles = payload.profiles;
+  private applyDefaultProfile(): void {
     if (!this.selectedProfileId && this.profiles.length) {
       this.selectedProfileId = this.profiles[0].id;
       this.applyProfile();
     }
   }
 
-  private async loadAssets(): Promise<void> {
-    const payload = await this.apiFetch<{ assets: KnowledgeAsset[] }>("/knowledge");
-    this.assets = payload.assets;
-    this.selectedSourceIds = new Set(Array.from(this.selectedSourceIds).filter((id) => this.assets.some((asset) => asset.id === id)));
-    this.persistSelection();
-  }
-
-  private async loadJobs(): Promise<void> {
-    const payload = await this.apiFetch<{ jobs: ExamJob[] }>("/exam-jobs");
-    this.jobs = payload.jobs;
-  }
-
   private async pollKnowledge(documentId: string): Promise<void> {
     for (let attempt = 1; attempt <= 90; attempt += 1) {
-      const payload = await this.apiFetch<{ asset: KnowledgeAsset }>(`/knowledge/${documentId}`);
-      this.upsertAsset(payload.asset);
+      const asset = await this.workspace.getKnowledge(documentId);
 
-      if (payload.asset.status === "READY") {
-        this.selectedSourceIds.add(payload.asset.id);
-        this.persistSelection();
-        this.addActivity(`Source ${documentId} is ready.`);
-        this.activeTab = "generate";
+      if (asset.status === "READY") {
+        this.workspace.selectSource(asset.id);
+        this.addActivity("Source is ready to use.");
+        this.setTab("generate");
         return;
       }
 
-      if (payload.asset.status === "FAILED") {
-        throw new Error(payload.asset.error || "Source processing failed.");
+      if (asset.status === "FAILED") {
+        throw new Error(asset.error || "We could not prepare this source. Try another file or paste the text instead.");
       }
 
       await this.delay(2000);
     }
 
-    throw new Error("Timed out waiting for source processing.");
+    throw new Error("Preparing this source took too long. Refresh sources in a moment to check again.");
   }
 
   private async pollJob(jobId: string): Promise<void> {
     for (let attempt = 1; attempt <= 60; attempt += 1) {
-      const payload = await this.apiFetch<{ job: ExamJob; result?: ExamResult }>(`/exam-jobs/${jobId}`);
+      const payload = await this.workspace.getExamJob(jobId);
       if (payload.job.status === "COMPLETED" && payload.result) {
-        this.setResult(payload.result);
-        this.addActivity(`Exam job ${jobId} completed.`);
-        this.activeTab = "review";
+        this.review.setResult(payload.result);
+        this.addActivity("Exam is ready for review.");
+        this.setTab("review");
         return;
       }
 
       if (payload.job.status === "FAILED") {
-        throw new Error(payload.job.error || "Exam generation failed.");
+        throw new Error(payload.job.error || "Exam generation failed. Try fewer questions or a smaller source set.");
       }
 
       await this.delay(2500);
     }
 
-    throw new Error("Timed out waiting for exam generation.");
-  }
-
-  private setResult(result: ExamResult): void {
-    this.result = result;
-    this.interactions = result.questions.map(() => ({
-      selectedChoice: null,
-      showHint: false,
-      showAnswer: false,
-    }));
+    throw new Error("Exam generation is taking longer than expected. Check History again in a moment.");
   }
 
   private selectedQuestionTypes(): QuestionType[] {
@@ -540,46 +523,9 @@ export class AppComponent implements OnInit {
     return types;
   }
 
-  private upsertAsset(asset: KnowledgeAsset): void {
-    const existingIndex = this.assets.findIndex((item) => item.id === asset.id);
-    if (existingIndex >= 0) {
-      this.assets[existingIndex] = asset;
-    } else {
-      this.assets = [asset, ...this.assets];
-    }
-  }
-
-  private async apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-    if (!this.config) {
-      throw new Error("Runtime config is missing.");
-    }
-    if (!this.tokens?.accessToken || this.isTokenExpired()) {
-      this.clearSession();
-      throw new Error("Sign in again before calling the API.");
-    }
-
-    const headers = new Headers(options.headers);
-    headers.set("Authorization", `Bearer ${this.tokens.accessToken}`);
-    if (options.body && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
-    }
-
-    const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
-      ...options,
-      headers,
-    });
-    const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
-    this.setTechnicalDetails({ path, status: response.status, payload });
-
-    if (!response.ok) {
-      throw new Error(payload.message || `Request failed with ${response.status}`);
-    }
-    return payload as T;
-  }
-
-  private async withBusy(label: string, action: () => Promise<void>): Promise<void> {
+  private async withBusy(label: string, action: () => Promise<void>, retryLabel = "", retryAction: RetryAction = null): Promise<void> {
     this.busy = true;
+    this.clearError();
     this.setStatus(label);
     try {
       await action();
@@ -587,65 +533,45 @@ export class AppComponent implements OnInit {
         this.setStatus("Ready");
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.setStatus(message);
-      this.addActivity(message);
-      this.setTechnicalDetails({ error: message });
+      this.handleError(error, retryLabel, retryAction);
     } finally {
       this.busy = false;
+      this.cdr.markForCheck();
     }
   }
 
   private setStatus(message: string): void {
     this.status = message;
+    this.cdr.markForCheck();
+  }
+
+  private setError(message: string, retryLabel = "", retryAction: RetryAction = null): void {
+    this.errorMessage = message;
+    this.retryLabel = retryLabel;
+    this.retryAction = retryAction;
+    this.setStatus(message);
+  }
+
+  private handleError(error: unknown, retryLabel = "", retryAction: RetryAction = null): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.setError(message, retryLabel, retryAction);
+    this.addActivity(message);
+    this.api.setTechnicalDetails({ error: message });
   }
 
   private addActivity(message: string): void {
     this.activity = [message, ...this.activity].slice(0, 8);
-  }
-
-  private setTechnicalDetails(payload: unknown): void {
-    this.technicalDetails = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
-  }
-
-  private isTokenExpired(): boolean {
-    return Boolean(this.tokens && Date.now() > this.tokens.expiresAt - 60000);
-  }
-
-  private authDomain(): string {
-    return String(this.config?.cognitoDomain || "").replace(/\/$/, "");
-  }
-
-  private redirectUri(): string {
-    return this.config?.redirectUri || `${window.location.origin}/`;
-  }
-
-  private logoutUri(): string {
-    return this.config?.logoutUri || `${window.location.origin}/`;
-  }
-
-  private createRandomString(): string {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    return this.base64Url(bytes);
-  }
-
-  private async createCodeChallenge(verifier: string): Promise<string> {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-    return this.base64Url(new Uint8Array(digest));
-  }
-
-  private base64Url(bytes: Uint8Array): string {
-    let text = "";
-    bytes.forEach((byte) => {
-      text += String.fromCharCode(byte);
-    });
-    return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    this.cdr.markForCheck();
   }
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => {
       window.setTimeout(resolve, ms);
     });
+  }
+
+  private isSupportedFile(file: File): boolean {
+    const name = file.name.toLowerCase();
+    return name.endsWith(".pdf") || name.endsWith(".txt") || name.endsWith(".docx");
   }
 }
