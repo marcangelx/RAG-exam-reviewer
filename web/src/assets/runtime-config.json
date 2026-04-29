@@ -1,0 +1,7 @@
+{
+  "apiBaseUrl": "",
+  "cognitoDomain": "",
+  "cognitoClientId": "",
+  "redirectUri": "http://localhost:4200/",
+  "logoutUri": "http://localhost:4200/"
+}

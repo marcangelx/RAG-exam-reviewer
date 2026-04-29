@@ -1,0 +1,8 @@
+.agents/
+.aws-sam/
+docs/
+infra/
+scripts/
+tests/
+web/
+*.md

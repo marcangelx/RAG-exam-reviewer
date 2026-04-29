@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-25T07:30:00+08:00",
+  "title": "Design System: Exam Prep MVP",
+  "extensions": {
+    "colorMeta": {
+      "background-warm-parchment": {
+        "role": "neutral",
+        "displayName": "Warm Parchment",
+        "canonical": "oklch(0.978 0.008 80)",
+        "tonalRamp": [
+          "oklch(0.15 0.008 80)",
+          "oklch(0.28 0.008 80)",
+          "oklch(0.40 0.008 80)",
+          "oklch(0.52 0.008 80)",
+          "oklch(0.64 0.008 80)",
+          "oklch(0.76 0.008 80)",
+          "oklch(0.88 0.008 80)",
+          "oklch(0.97 0.008 80)"
+        ]
+      },
+      "surface-quiet-paper": {
+        "role": "neutral",
+        "displayName": "Quiet Paper",
+        "canonical": "oklch(0.992 0.004 80)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 80)",
+          "oklch(0.28 0.004 80)",
+          "oklch(0.40 0.004 80)",
+          "oklch(0.52 0.004 80)",
+          "oklch(0.64 0.004 80)",
+          "oklch(0.76 0.004 80)",
+          "oklch(0.88 0.004 80)",
+          "oklch(0.99 0.004 80)"
+        ]
+      },
+      "primary-study-teal": {
+        "role": "primary",
+        "displayName": "Study Teal",
+        "canonical": "oklch(0.58 0.105 198)",
+        "tonalRamp": [
+          "oklch(0.15 0.105 198)",
+          "oklch(0.27 0.105 198)",
+          "oklch(0.39 0.105 198)",
+          "oklch(0.51 0.105 198)",
+          "oklch(0.63 0.105 198)",
+          "oklch(0.75 0.075 198)",
+          "oklch(0.87 0.045 198)",
+          "oklch(0.95 0.025 198)"
+        ]
+      },
+      "success-verified-green": {
+        "role": "tertiary",
+        "displayName": "Verified Green",
+        "canonical": "oklch(0.62 0.11 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.11 150)",
+          "oklch(0.27 0.11 150)",
+          "oklch(0.39 0.11 150)",
+          "oklch(0.51 0.11 150)",
+          "oklch(0.63 0.11 150)",
+          "oklch(0.75 0.08 150)",
+          "oklch(0.87 0.05 150)",
+          "oklch(0.95 0.025 150)"
+        ]
+      },
+      "danger-review-red": {
+        "role": "tertiary",
+        "displayName": "Review Red",
+        "canonical": "oklch(0.58 0.18 25)",
+        "tonalRamp": [
+          "oklch(0.15 0.18 25)",
+          "oklch(0.27 0.18 25)",
+          "oklch(0.39 0.18 25)",
+          "oklch(0.51 0.18 25)",
+          "oklch(0.63 0.14 25)",
+          "oklch(0.75 0.095 25)",
+          "oklch(0.87 0.055 25)",
+          "oklch(0.95 0.025 25)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "App title and highest-level product context."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Primary workspace sections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Questions, instructions, and explanatory text."
+      },
+      "eyebrow": {
+        "displayName": "Eyebrow",
+        "purpose": "Rare context labels such as phase or mode."
+      }
+    },
+    "shadows": [
+      {
+        "name": "ambient-panel",
+        "value": "0 18px 42px rgba(33, 47, 58, 0.07)",
+        "purpose": "Soft structural lift for major shells only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-product",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Recommended easing for future non-layout transitions."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "respect prefers-reduced-motion",
+        "purpose": "Motion must be optional and never required to understand progress."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "panel-collapse",
+        "value": "920px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary workflow action such as sign in, save source, upload source, or create exam job.",
+      "html": "<button class=\"ds-btn-primary\">Create exam job</button>",
+      "css": ".ds-btn-primary { min-height: 40px; border: 1px solid transparent; border-radius: 8px; padding: 0 14px; color: var(--surface, oklch(0.992 0.004 80)); background: var(--accent, oklch(0.58 0.105 198)); font-weight: 700; cursor: pointer; transition: background-color 160ms cubic-bezier(0.22, 1, 0.36, 1), transform 160ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-btn-primary:hover { background: var(--accent-strong, oklch(0.49 0.11 198)); } .ds-btn-primary:focus-visible { outline: 3px solid color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 38%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary action for refresh, open, reveal, or low-risk state changes.",
+      "html": "<button class=\"ds-btn-secondary\">Refresh</button>",
+      "css": ".ds-btn-secondary { min-height: 40px; border: 1px solid var(--border, oklch(0.88 0.012 82)); border-radius: 8px; padding: 0 14px; color: var(--text, oklch(0.285 0.02 240)); background: var(--surface-muted, oklch(0.968 0.009 200)); font-weight: 700; cursor: pointer; transition: border-color 160ms cubic-bezier(0.22, 1, 0.36, 1), background-color 160ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-btn-secondary:hover { border-color: color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 35%, var(--border, oklch(0.88 0.012 82))); } .ds-btn-secondary:focus-visible { outline: 3px solid color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 32%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Standard text input for titles, certification target, and configuration.",
+      "html": "<label class=\"ds-label\" for=\"ds-title\">Title</label><input class=\"ds-input\" id=\"ds-title\" placeholder=\"AWS networking notes\" />",
+      "css": ".ds-label { display: block; margin-bottom: 6px; color: var(--text-soft, oklch(0.49 0.018 220)); font-size: 0.9rem; font-weight: 700; } .ds-input { width: 100%; border: 1px solid var(--border, oklch(0.88 0.012 82)); border-radius: 8px; background: var(--surface, oklch(0.992 0.004 80)); color: var(--text, oklch(0.285 0.02 240)); padding: 11px 12px; font: inherit; } .ds-input:focus-visible { outline: 3px solid color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 28%, transparent); outline-offset: 2px; border-color: var(--accent, oklch(0.58 0.105 198)); }"
+    },
+    {
+      "name": "Workspace Tabs",
+      "kind": "nav",
+      "refersTo": "button-secondary",
+      "description": "Compact navigation across Sources, Generate, Review, and History.",
+      "html": "<nav class=\"ds-tabs\" aria-label=\"Workspace views\"><button class=\"ds-tab ds-tab-active\">Sources</button><button class=\"ds-tab\">Generate</button><button class=\"ds-tab\">Review</button></nav>",
+      "css": ".ds-tabs { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; } .ds-tab { min-height: 40px; border: 1px solid var(--border, oklch(0.88 0.012 82)); border-radius: 8px; padding: 0 14px; color: var(--text, oklch(0.285 0.02 240)); background: var(--surface, oklch(0.992 0.004 80)); font-weight: 700; cursor: pointer; } .ds-tab-active { color: var(--surface, oklch(0.992 0.004 80)); background: var(--accent, oklch(0.58 0.105 198)); border-color: transparent; } .ds-tab:focus-visible { outline: 3px solid color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 32%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Source Card",
+      "kind": "card",
+      "refersTo": "status-pill",
+      "description": "Selectable source material row with status and ready-state action.",
+      "html": "<article class=\"ds-source-card\"><div><h3>FDM Volume 1</h3><p>FILE PDF | READY</p></div><button class=\"ds-card-action\">Use in exam</button></article>",
+      "css": ".ds-source-card { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; border: 1px solid var(--border, oklch(0.88 0.012 82)); border-radius: 8px; background: var(--surface, oklch(0.992 0.004 80)); padding: 16px; color: var(--text, oklch(0.285 0.02 240)); } .ds-source-card h3 { margin: 0; font-size: 1rem; line-height: 1.3; } .ds-source-card p { margin: 6px 0 0; color: var(--text-soft, oklch(0.49 0.018 220)); line-height: 1.5; } .ds-card-action { min-height: 40px; border: 1px solid var(--border, oklch(0.88 0.012 82)); border-radius: 8px; padding: 0 14px; color: var(--text, oklch(0.285 0.02 240)); background: var(--surface-muted, oklch(0.968 0.009 200)); font-weight: 700; }"
+    },
+    {
+      "name": "Review Choice",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Interactive answer option that supports selected, correct, and incorrect states.",
+      "html": "<button class=\"ds-choice\">A. Use one selected source for each generated exam.</button>",
+      "css": ".ds-choice { width: 100%; min-height: 40px; text-align: left; border: 1px solid var(--border, oklch(0.88 0.012 82)); border-radius: 8px; padding: 10px 12px; color: var(--text, oklch(0.285 0.02 240)); background: var(--surface-muted, oklch(0.968 0.009 200)); font-weight: 700; cursor: pointer; } .ds-choice:hover { border-color: color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 45%, var(--border, oklch(0.88 0.012 82))); background: color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 9%, var(--surface, oklch(0.992 0.004 80))); } .ds-choice:focus-visible { outline: 3px solid color-mix(in oklab, var(--accent, oklch(0.58 0.105 198)) 32%, transparent); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Study Desk",
+    "overview": "The interface should feel like a clean, well-lit study surface: calm, organized, and precise. The product is not trying to entertain the user. It is helping an individual learner turn trusted source material into focused certification practice.",
+    "keyCharacteristics": [
+      "Warm, readable, low-noise surfaces.",
+      "One clear primary action per workflow moment.",
+      "Source visibility before generation.",
+      "Interactive review states that feel deliberate, not game-like.",
+      "Technical depth on demand, never as the default screen."
+    ],
+    "rules": [
+      {
+        "name": "The Teal Earns Attention Rule",
+        "body": "Study Teal is for action, selection, and progress. Do not spread it across decorative backgrounds.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Before Panels Rule",
+        "body": "Use tonal contrast first. Add borders and shadows only when the user needs structural separation.",
+        "section": "colors"
+      },
+      {
+        "name": "The Study Voice Rule",
+        "body": "Use direct labels and short sentences. Do not make headings repeat the paragraph below them.",
+        "section": "typography"
+      },
+      {
+        "name": "The Calm Hierarchy Rule",
+        "body": "Use weight and spacing before dramatic type size jumps. This is a product workspace, not a landing page hero.",
+        "section": "typography"
+      },
+      {
+        "name": "The Desk Surface Rule",
+        "body": "If a container looks like a floating SaaS card, it is too elevated. Reduce the shadow, rely on the border, or use tonal separation.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do show selected source material clearly before generation.",
+      "Do keep the Sources, Generate, Review, and History path visible and predictable.",
+      "Do use Study Teal only for action, active state, and selection.",
+      "Do keep technical details available behind disclosure controls.",
+      "Do use keyboard-visible focus states on buttons, tabs, inputs, choices, and summaries.",
+      "Do keep motion reduced-motion friendly and limited to opacity, transform, or color transitions."
+    ],
+    "donts": [
+      "Don't create busy LMS dashboards.",
+      "Don't create enterprise admin panels.",
+      "Don't create cluttered upload portals.",
+      "Don't use generic AI SaaS layouts with excessive gradients, glass effects, or repeated identical cards.",
+      "Don't turn Dribbble or Behance polish into decorative concept UI that weakens the workflow.",
+      "Don't use gradient text, side-stripe card borders, or glassmorphism as default styling.",
+      "Don't hide source status or selected materials when the user is about to generate an exam."
+    ]
+  }
+}
